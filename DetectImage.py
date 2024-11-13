@@ -30,7 +30,7 @@ def extract_license_text(crop_img):
     return None
 
 # Load the target image
-image_path = "test5.jpg"  # Replace with the path to your image
+image_path = "test6.jpg"  # Replace with the path to your image
 frame = cv2.imread(image_path)
 
 # Check if the image was loaded successfully
@@ -52,11 +52,13 @@ else:
                 x1, y1, x2, y2 = map(int, box)
                 
                 # Expand the box horizontally to capture the bike and rider
-                padding = 30  # Increase the box size by 10 pixels on each side
-                x1 = max(0, x1 - padding)
-                y1 = max(0, y1 - padding)
-                x2 = min(frame.shape[1], x2 + padding)
-                y2 = min(frame.shape[0], y2 + padding)
+                padding_x = 30  # Increase the box size by 10 pixels on each side
+                padding_y = 180  # Increase the box size by 10 pixels on each side
+
+                x1 = max(0, x1 - padding_x)
+                y1 = max(0, y1 - padding_x)
+                x2 = min(frame.shape[1], x2 + padding_y)
+                y2 = min(frame.shape[0], y2 + padding_y)
                 
                 # Crop the region with the expanded area
                 person_roi = frame[y1:y2, x1:x2]
