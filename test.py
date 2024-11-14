@@ -3,7 +3,7 @@ import cv2
 import matplotlib.pyplot as plt
 
 # Load the YOLOv8 model
-model = YOLO('helmet_detector2.pt')
+model = YOLO('license_plate_2.pt')
 
 # Load and perform inference on the image
 image_path = 'test5.jpg'
