@@ -34,6 +34,7 @@ os.makedirs(output_folder, exist_ok=True)
 
 # Load the target image
 image_path = "test2.jpg"  # Replace with the path to your image
+image_path = "test2.jpg"  # Replace with the path to your image
 frame = cv2.imread(image_path)
 
 # Check if the image was loaded successfully
