@@ -48,7 +48,7 @@ output_folder = "output_images"
 os.makedirs(output_folder, exist_ok=True)
 
 # Load the target image
-image_path = "test5.jpg"  # Replace with the path to your image
+image_path = "test2.jpg"  # Replace with the path to your image
 frame = cv2.imread(image_path)
 
 # Check if the image was loaded successfully
@@ -136,14 +136,14 @@ else:
                 "license_plate": license_plate,
                 "rider_box": rider_box
             }
-            
+
             if not helmet_found:
                 image_filename = os.path.join(output_folder, f"Rider_{idx}.jpg")
                 print(f"Rider {idx} - Helmet Found: {helmet_found}")
-                
+
                 # Save the image with the bounding boxes
                 cv2.imwrite(image_filename, rider_crop)
-                
+
                 # Display the image with the bounding boxes
                 cv2.imshow(f"License Plate of Rider {idx} without Helmet", rider_crop)
                 cv2.waitKey(0)  # Wait until a key is pressed
