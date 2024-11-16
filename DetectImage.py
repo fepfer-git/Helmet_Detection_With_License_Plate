@@ -1,121 +1,150 @@
-import os
 import cv2
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 from ultralytics import YOLO
+from datetime import datetime
 import easyocr
+import uuid
 
-# Initialize EasyOCR reader and YOLO models
-reader = easyocr.Reader(['en'])
+# Initialize EasyOCR reader
+reader = easyocr.Reader(['en'])  # You can specify multiple languages if needed
+
+def license_complies_format(text):
+    # Implement your logic to check if the license plate text complies with the desired format
+    return True
+
+def format_license(text):
+    # Implement your logic to format the license plate text
+    return text
+
+def read_license_plate(license_plate_crop):
+    """
+    Read the license plate text from the given cropped image.
+
+    Args:
+        license_plate_crop (PIL.Image.Image): Cropped image containing the license plate.
+
+    Returns:
+        tuple: Tuple containing the formatted license plate text and its confidence score.
+    """
+    detections = reader.readtext(license_plate_crop)
+
+    for detection in detections:
+        bbox, text, score = detection
+
+        text = text.upper().replace(' ', '')
+
+        if license_complies_format(text):
+            return format_license(text), score
+
+    return None, None
+
+# Load the YOLO models
+rider_model = YOLO("helmet_detector2.pt")  # Model for detecting helmets
 helmet_model = YOLO("helmet_detector.pt")  # Model for detecting helmets
-license_plate_model = YOLO("license_plate_detector.pt")  # Model for detecting license plates
-person_model = YOLO("yolov8n.pt")  # Model to detect people (for getting full person and bike)
 
 # Output folder for saved images
 output_folder = "output_images"
 os.makedirs(output_folder, exist_ok=True)
 
-def extract_license_text(crop_img):
-    """
-    Extracts text from the cropped license plate image using EasyOCR.
-    """
-    detections = reader.readtext(crop_img)
-    if not detections:
-        print("No text detected in the license plate region.")
-        return None
-
-    for bbox, text, score in detections:
-        text = text.upper().replace(" ", "")
-        print(f"Detected text: {text} with score {score}")
-        if len(text) >= 5:  # Example condition for a valid license plate format
-            return text
-    return None
-
 # Load the target image
-image_path = "test6.jpg"  # Replace with the path to your image
+image_path = "test5.jpg"  # Replace with the path to your image
 frame = cv2.imread(image_path)
 
 # Check if the image was loaded successfully
 if frame is None:
     print(f"Error: Image at {image_path} could not be loaded.")
 else:
-    # Detect people in the image using the person model
-    person_results = person_model(frame)
-    save_with_license = False  # Flag to check if a no-helmet person is found
-    license_text_for_save = "having_helmet"  # Default name if everyone has helmets
+    # Detect riders in the image
+    max_width = 1080
+    max_height = 680
+    height, width = frame.shape[:2]
+    if width > max_width or height > max_height:
+        scaling_factor = min(max_width / width, max_height / height)
+        frame = cv2.resize(frame, None, fx=scaling_factor, fy=scaling_factor, interpolation=cv2.INTER_AREA)
+    
+    detection_results = rider_model(frame)
+    rider_boxes = []
 
-    for result in person_results:
+    for result in detection_results:
         for i in range(len(result.boxes)):
             box = result.boxes.xyxy[i]
             cls = int(result.boxes.cls[i])
             confidence = result.boxes.conf[i]
 
-            if cls == 0 and confidence > 0.5:  # Class 0: Person
-                x1, y1, x2, y2 = map(int, box)
+            # Draw bounding box and label for all detected objects
+            x1, y1, x2, y2 = map(int, box)
+            label = f"{rider_model.names[cls]} {confidence:.2f}"
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+            if confidence > 0.1 and cls == 2:  # Class 2: Motorbike Rider
+                rider_boxes.append((x1, y1, x2, y2))
+
+    print(f"Number of riders detected: {len(rider_boxes)}")
+    print(f"Rider boxes: {rider_boxes}")
+
+    # Dictionary to store rider boxes and their corresponding helmet and license plate
+    rider_info = {}
+
+    for idx, rider_box in enumerate(rider_boxes):
+        print(f"Processing Rider --------- {idx}...")
+        
+        x1, y1, x2, y2 = rider_box
+        rider_crop = frame[y1:y2, x1:x2]
+
+        detection_results = rider_model(rider_crop)
+        helmet_detection_results = helmet_model(rider_crop)
+        
+        helmet_found = False
+        license_plate = None
+
+        for result in detection_results:
+            for i in range(len(result.boxes)):
+                box = result.boxes.xyxy[i]
+                cls = int(result.boxes.cls[i])
+                confidence = result.boxes.conf[i]
+
+                if confidence > 0.1:
+                    bx1, by1, bx2, by2 = map(int, box)
+                    bx1 += x1
+                    by1 += y1
+                    bx2 += x1
+                    by2 += y1
+
+                    if cls == 1:  # Class 1: Helmet
+                        helmet_found = True
+                    elif cls == 0:  # Class 0: License Plate
+                        license_plate = (bx1, by1, bx2, by2)
+                        
+        # Check again with another model
+        for result in helmet_detection_results:
+            for i in range(len(result.boxes)):
+                box = result.boxes.xyxy[i]
+                cls = int(result.boxes.cls[i])
+                confidence = result.boxes.conf[i]
+
+                if confidence > 0.1 and cls == 0:
+                    helmet_found = True
+        
+        if license_plate is not None:
+            bx1, by1, bx2, by2 = license_plate
+            license_plate_crop = frame[by1:by2, bx1:bx2]
+
+            rider_info[idx] = {
+                "helmet_found": helmet_found,
+                "license_plate": license_plate,
+                "rider_box": rider_box
+            }
+            
+            if not helmet_found:
+                image_filename = os.path.join(output_folder, f"Rider_{idx}.jpg")
+                print(f"Rider {idx} - Helmet Found: {helmet_found}")
                 
-                # Expand the box horizontally to capture the bike and rider
-                padding_x = 30  # Increase the box size by 10 pixels on each side
-                padding_y = 180  # Increase the box size by 10 pixels on each side
-
-                x1 = max(0, x1 - padding_x)
-                y1 = max(0, y1 - padding_x)
-                x2 = min(frame.shape[1], x2 + padding_y)
-                y2 = min(frame.shape[0], y2 + padding_y)
+                # Save the image with the bounding boxes
+                cv2.imwrite(image_filename, rider_crop)
                 
-                # Crop the region with the expanded area
-                person_roi = frame[y1:y2, x1:x2]
-                print(f"Detected person with expanded region: {x1, y1, x2, y2}")
-
-                # Draw a bounding box around the person
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (105, 105, 105), 1)
-                cv2.putText(frame, "Person", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (105, 105, 105), 2)
-
-                # Run helmet detection within the expanded region
-                helmet_results = helmet_model(person_roi)
-                
-                for helmet_result in helmet_results:
-                    for j in range(len(helmet_result.boxes)):
-                        helmet_box = helmet_result.boxes.xyxy[j]
-                        helmet_cls = int(helmet_result.boxes.cls[j])
-                        helmet_conf = helmet_result.boxes.conf[j]
-
-                        hx1, hy1, hx2, hy2 = map(int, helmet_box)
-                        label = "No-Helmet" if helmet_cls == 1 else "Helmet"
-
-                        # Run license plate detection within the expanded region if no helmet
-                        if helmet_cls == 0:  # No helmet detected
-                            cv2.rectangle(frame, (x1 + hx1, y1 + hy1), (x1 + hx2, y1 + hy2), (0, 255, 0), 2)  # Green color in BGR
-                            cv2.putText(frame, label, (x1 + hx1, y1 + hy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-                                                     
-                            save_with_license = True  # We should save based on license plate
-                            license_plate_results = license_plate_model(person_roi)
-
-                            for lp_result in license_plate_results:
-                                if len(lp_result.boxes) > 0:
-                                    # Use the first detected license plate in the person's ROI
-                                    lp_box = lp_result.boxes.xyxy[0]
-                                    lp_x1, lp_y1, lp_x2, lp_y2 = map(int, lp_box)
-
-                                    # Draw bounding box for the detected license plate
-                                    cv2.rectangle(frame, (x1 + lp_x1, y1 + lp_y1), (x1 + lp_x2, y1 + lp_y2), (220,20,60), 2)
-                                    cv2.putText(frame, "License Plate", (x1 + lp_x1, y1 + lp_y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (220,20,60), 2)
-
-                                    # Extract license plate region and read text
-                                    license_plate_roi = person_roi[lp_y1:lp_y2, lp_x1:lp_x2]
-                                    license_text = extract_license_text(license_plate_roi)
-
-                                    if license_text:
-                                        license_text_for_save = license_text  # Update to use license plate text
-
-                        if helmet_cls == 1: 
-                            cv2.rectangle(frame, (x1 + hx1, y1 + hy1), (x1 + hx2, y1 + hy2), (255, 0, 0), 2)
-                            cv2.putText(frame, label, (x1 + hx1, y1 + hy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
-
-    # Show the frame with all drawn boxes for debugging
-    cv2.imshow("Annotated Image", frame)
-    cv2.waitKey(0)  # Wait until a key is pressed
-    cv2.destroyAllWindows()
-
-    # Save the image with the appropriate filename
-    image_filename = os.path.join(output_folder, f"{license_text_for_save}.jpg")
-    cv2.imwrite(image_filename, frame)
-    print(f"Saved image to {image_filename}")
+                # Display the image with the bounding boxes
+                cv2.imshow(f"License Plate of Rider {idx} without Helmet", rider_crop)
+                cv2.waitKey(0)  # Wait until a key is pressed
+                cv2.destroyAllWindows()
